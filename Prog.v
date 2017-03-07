@@ -1,4 +1,5 @@
 Require Import Relation_Operators.
+Require Import PFun.
 
 Global Set Implicit Arguments.
 
@@ -89,3 +90,9 @@ Section Prog.
       end.
 
 End Prog.
+
+Instance tid_EqDec : EqDec TID.
+Proof.
+  unfold EqDec.
+  decide equality.
+Defined.

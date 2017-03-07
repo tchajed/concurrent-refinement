@@ -1,15 +1,6 @@
-Require Arith.
 Require Import Prog.
-
-Definition EqDec A := forall (x y:A), {x=y}+{x<>y}.
-Existing Class EqDec.
-
-Instance tid_EqDec : EqDec TID := PeanoNat.Nat.eq_dec.
-
-Definition pfun A V := A -> option V.
-
-Definition upd A {AEQ: EqDec A} V (m: pfun A V) a v : pfun A V :=
-  fun a' => if AEQ a a' then Some v else m a'.
+Require Import PFun.
+Require Import Automation.
 
 Section Threads.
 
@@ -46,23 +37,25 @@ Section Threads.
 
   Definition Env := pfun TID {T:Type & prog act T}.
 
+  Notation "'witness' x" := (existT _ _ x) (at level 30).
+
   Inductive out_prog_is T : YieldOutcome T ->
                             state sem -> {T:Type & prog act T} -> Prop :=
   | CompletedProg : forall s v,
-      out_prog_is (Completed s v) s (existT _ _ (Ret _ v))
+      out_prog_is (Completed s v) s (witness (Ret _ v))
   | YieldedProg : forall s p,
-      out_prog_is (Yielded s p) s (existT _ _ p).
+      out_prog_is (Yielded s p) s (witness p).
 
   (* TODO: should really have an error output *)
   Inductive envExec : state sem -> Env -> state sem -> Env -> Prop :=
   | EnvExecDone : forall s env,
       (forall tid, match env tid with
-              | Some (existT _ _ p) => exists v, p = Ret act v
+              | Some (witness p) => exists v, p = Ret act v
               | None => True
               end) ->
       envExec s env s env
   | EnvExecStep : forall s env tid T (p: prog act T),
-      env tid = Some (existT _ _ p) ->
+      env tid = Some (witness p) ->
       forall out,
         execSection s p out ->
         forall s' p',
@@ -72,22 +65,55 @@ Section Threads.
             envExec s' (upd env tid p') s'' env'' ->
             envExec s env s'' env''.
 
+  Inductive toutcome T :=
+  | TFinished : state sem -> T -> toutcome T
+  | TError.
+  Arguments TError {T}.
+
   Inductive texec (tid:TID) :
-    Env -> forall T, state sem * state sem -> prog act T ->
-               Env -> outcome sem T -> Prop :=
-  | TexecComplete : forall env s_i s T (p: prog _ T) s' v,
+    Env -> forall T, state sem -> prog act T ->
+               Env -> toutcome T -> Prop :=
+  | TexecComplete : forall env s T (p: prog _ T) s' v,
       execSection s p (Completed s' v) ->
-      texec tid env (s_i, s) p env (Finished _ (s_i, s') v)
-  | TexecYield : forall env s_i s T (p: prog _ T),
+      texec tid env s p env (TFinished s' v)
+  | TexecYield : forall env s T (p: prog _ T),
       forall s' p',
         execSection s p (Yielded s' p') ->
         forall s'' env',
           envExec s' env s'' env' ->
           forall env'' out,
-            texec tid env' (s'', s'') p' env'' out ->
-            texec tid env (s_i, s) p env'' out
-  | TexecError : forall env s_i s T (p: prog _ T),
+            texec tid env' s'' p' env'' out ->
+            texec tid env s p env'' out
+  | TexecError : forall env s T (p: prog _ T),
       execSection s p YieldError ->
-      texec tid env (s_i, s) p env (Error _ _).
+      texec tid env s p env TError.
+
+  Hint Constructors texec execSection envExec.
+
+  Theorem env_to_texec : forall s ts s'' ts' tid T (p: prog _ T),
+      ts tid = Some (witness p) ->
+      envExec s ts s'' ts' ->
+      let env := remove ts tid in
+      exists s' env' v,
+        texec tid env s p env'
+              (TFinished s' v) /\
+        envExec s' (upd env' tid (witness (Ret _ v))) s'' ts'.
+  Proof.
+    intros.
+    assert (ts = upd env tid (witness p)) as Hts.
+    apply remove_upd; auto.
+    rewrite Hts in *; clear Hts.
+    assert (env tid = None).
+    subst env; autorewrite with upd; auto.
+    clear H.
+    generalize dependent env.
+    intros.
+    remember (upd env tid (witness p)).
+    induction H0; subst.
+    - pose proof (H tid); autorewrite with upd in *; deex; subst.
+      exists s, env, v.
+      intuition eauto.
+    - admit.
+  Abort.
 
 End Threads.

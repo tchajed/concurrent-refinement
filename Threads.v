@@ -18,10 +18,9 @@ Section Threads.
 
   Inductive YieldOutcome T :=
   | Completed : state sem -> T -> YieldOutcome T
-  | Yielded : forall T', state sem -> prog act T' -> YieldOutcome T
+  | Yielded : state sem -> prog act T -> YieldOutcome T
   | YieldError : YieldOutcome T.
   Arguments YieldError {T}.
-  Arguments Yielded {T T'} s p.
 
   Inductive execSection : forall T, state sem -> prog act T ->
                                YieldOutcome T -> Prop :=
@@ -41,9 +40,9 @@ Section Threads.
       execSection s' (p2 v) out ->
       execSection s (Bind p1 p2) out
   | ExecSectionBindYield : forall T T' (p1: prog act T') (p2: T' -> prog act T)
-                                 s s' T'' (p': prog act T''),
-      execSection s p1 (Yielded s' p') ->
-      execSection s (Bind p1 p2) (Yielded s' p').
+                                 s s' p1',
+      execSection s p1 (Yielded s' p1') ->
+      execSection s (Bind p1 p2) (Yielded s' (Bind p1' p2)).
 
   Definition Env := pfun TID {T:Type & prog act T}.
 
@@ -51,9 +50,10 @@ Section Threads.
                             state sem -> {T:Type & prog act T} -> Prop :=
   | CompletedProg : forall s v,
       out_prog_is (Completed s v) s (existT _ _ (Ret _ v))
-  | YieldedProg : forall s T' (p: prog _ T'),
+  | YieldedProg : forall s p,
       out_prog_is (Yielded s p) s (existT _ _ p).
 
+  (* TODO: should really have an error output *)
   Inductive envExec : state sem -> Env -> state sem -> Env -> Prop :=
   | EnvExecDone : forall s env,
       (forall tid, match env tid with
@@ -61,12 +61,33 @@ Section Threads.
               | None => True
               end) ->
       envExec s env s env
-  | EnvExecStep : forall s env tid T (p: prog act T) out
-                    s' p' s'' env'',
+  | EnvExecStep : forall s env tid T (p: prog act T),
       env tid = Some (existT _ _ p) ->
-      execSection s p out ->
-      out_prog_is out s' p' ->
-      envExec s' (upd env tid p') s'' env'' ->
-      envExec s env s'' env''.
+      forall out,
+        execSection s p out ->
+        forall s' p',
+          (* out_prog_is masks errors in out *)
+          out_prog_is out s' p' ->
+          forall s'' env'',
+            envExec s' (upd env tid p') s'' env'' ->
+            envExec s env s'' env''.
+
+  Inductive texec (tid:TID) :
+    Env -> forall T, state sem * state sem -> prog act T ->
+               Env -> outcome sem T -> Prop :=
+  | TexecComplete : forall env s_i s T (p: prog _ T) s' v,
+      execSection s p (Completed s' v) ->
+      texec tid env (s_i, s) p env (Finished _ (s_i, s') v)
+  | TexecYield : forall env s_i s T (p: prog _ T),
+      forall s' p',
+        execSection s p (Yielded s' p') ->
+        forall s'' env',
+          envExec s' env s'' env' ->
+          forall env'' out,
+            texec tid env' (s'', s'') p' env'' out ->
+            texec tid env (s_i, s) p env'' out
+  | TexecError : forall env s_i s T (p: prog _ T),
+      execSection s p YieldError ->
+      texec tid env (s_i, s) p env (Error _ _).
 
 End Threads.

@@ -1,6 +1,7 @@
 Require Import Prog.
 Require Import PFun.
 Require Import Automation.
+Require Import Eqdep.
 
 Section Threads.
 
@@ -90,14 +91,57 @@ Section Threads.
 
   Hint Constructors texec execSection envExec.
 
+  Ltac invert :=
+    match goal with
+    | [ H: execSection _ (Ret _ _) _ |- _ ] =>
+      inversion H; subst; clear H
+    | [ H: out_prog_is (Completed _ _) _ _ |- _ ] =>
+      inversion H; subst; clear H
+    | [ H: Some _ = Some _ |- _ ] => inversion H; subst; clear H
+    | [ H: witness _ = witness _ |- _ ] => apply inj_pair2 in H; subst; clear H
+    end.
+
+  Lemma env_exec_ret_unchanged : forall s env s' env' tid T (v:T),
+      envExec s env s' env' ->
+      env tid = Some (witness (Ret _ v)) ->
+      env' tid = Some (witness (Ret _ v)).
+  Proof.
+    induction 1; intros; eauto.
+    destruct (eq_dec tid tid0); subst; autorewrite with upd in *;
+      intuition.
+    rewrite H in *; repeat invert; intuition eauto.
+  Qed.
+
+  Lemma env_exec_remove_ret : forall s env s' env' tid T (v:T),
+      envExec s env s' env' ->
+      env tid = Some (witness (Ret _ v)) ->
+      envExec s (remove env tid) s' (remove env' tid).
+  Proof.
+    induction 1; intros.
+    - econstructor; intros.
+      specialize (H tid0).
+      destruct (eq_dec tid tid0); subst; autorewrite with upd; eauto.
+    - destruct (eq_dec tid tid0); subst; autorewrite with upd in *;
+        intuition.
+      rewrite H in *; repeat invert; intuition eauto.
+      econstructor; eauto.
+      rewrite remove_neq; eauto.
+      rewrite upd_remove_commute by auto; eauto.
+  Qed.
+
   Theorem env_to_texec : forall s ts s'' ts' tid T (p: prog _ T),
       ts tid = Some (witness p) ->
       envExec s ts s'' ts' ->
       let env := remove ts tid in
       exists s' env' v,
+        (* this is not quite true: texec assumes that tid is currently
+        scheduled, but in envExec tid might be scheduled only after other
+        threads; it does basically hold if p starts with a yield, though, since
+        the other threads could be attributed to that yield *)
         texec tid env s p env'
               (TFinished s' v) /\
-        envExec s' (upd env' tid (witness (Ret _ v))) s'' ts'.
+        envExec s' env' s'' (remove ts' tid) /\
+        ts' tid = Some (witness (Ret _ v)).
   Proof.
     intros.
     assert (ts = upd env tid (witness p)) as Hts.
@@ -109,11 +153,31 @@ Section Threads.
     generalize dependent env.
     intros.
     remember (upd env tid (witness p)).
-    induction H0; subst.
+    generalize dependent tid.
+    generalize dependent env.
+    induction H0; intros; subst.
     - pose proof (H tid); autorewrite with upd in *; deex; subst.
-      exists s, env, v.
+      exists s, env0, v.
       intuition eauto.
-    - admit.
+      econstructor; intros.
+      destruct (eq_dec tid0 tid); subst.
+      replace (env0 tid); auto.
+      specialize (H tid0); autorewrite with upd in *; eauto.
+    - destruct (eq_dec tid tid0); subst; autorewrite with upd in *.
+      + inversion H; subst.
+        match goal with
+        | [ H: witness _ = witness _ |- _ ] =>
+          apply inj_pair2 in H; subst
+        end.
+        inversion H1; subst; clear H1.
+        exists s', env0, v.
+        intuition eauto.
+        eapply env_exec_remove_ret with (tid:=tid0) in H2;
+          autorewrite with upd in *; eauto.
+        eapply env_exec_ret_unchanged; eauto;
+          autorewrite with upd; eauto.
+        admit. (* this case is broken since tid is not initially scheduled *)
+      +
   Abort.
 
 End Threads.

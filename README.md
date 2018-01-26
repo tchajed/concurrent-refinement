@@ -1,4 +1,4 @@
-# Concurrent refinement
+# Intrumented concurrent semantics
 
 Experiments in defining instrumented semantics for programming languages and proving them sound with respect to lower-level semantics.
 
